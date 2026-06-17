@@ -20,9 +20,14 @@ torch = [
   "torch>=2.3.0",
   "torchaudio>=2.3.0",
 ]
+diarization = [
+  "pyannote.audio>=3.3.0",
+]
 
 [project.scripts]
 funasr-subtitle = "transcribe_funasr:main"
+pyannote-diarize = "diarize_pyannote:main"
+merge-speakers = "merge_speakers:main"
 
 [tool.setuptools]
-py-modules = ["transcribe_funasr"]
+py-modules = ["transcribe_funasr", "diarize_pyannote", "merge_speakers"]

@@ -161,3 +161,49 @@ ls -lh /path/to/speech-to-text/outputs-spk/
 - 如果加了 `--chunk-minutes`，脚本会按块显示进度并持续写入 partial 输出；这个模式只适合不加 `--spk` 的普通字幕。
 - 脚本默认禁止 `--spk + --chunk-minutes`。如果只是调试、接受 speaker 编号跨 chunk 不一致，可以显式加 `--allow-spk-chunking`。
 - `--no-sync` 会让 uv 使用安装脚本准备好的 `.venv`，避免运行时重新解析依赖或覆盖手动安装的 PyTorch wheel。
+
+## 更准确的两阶段说话人流程
+
+`--spk` 不适合和物理分块一起使用。更稳的做法是：FunASR 分块做 ASR，pyannote 对整段音频做全局 diarization，然后按时间重叠合并 speaker 标签。
+
+安装 diarization 依赖：
+
+```bash
+uv pip install --python .venv/bin/python -e '.[diarization]'
+```
+
+需要先在 Hugging Face 接受 pyannote 模型条款，并设置 token：
+
+```bash
+export HF_TOKEN=your_huggingface_token
+```
+
+第一步，分块跑 ASR，不加 `--spk`：
+
+```bash
+uv run --no-sync funasr-subtitle input.mp3 \
+  --device cuda:0 \
+  --chunk-minutes 30 \
+  --output-dir outputs-asr \
+  --hotword person_a \
+  --hotword person_b
+```
+
+第二步，对整段音频做全局 diarization，优先用 GPU：
+
+```bash
+uv run --no-sync pyannote-diarize input.mp3 \
+  --device cuda \
+  --num-speakers 5 \
+  --output-dir outputs-diarization
+```
+
+第三步，把全局 speaker 标签合并回 ASR 字幕：
+
+```bash
+uv run --no-sync merge-speakers \
+  outputs-asr/input.segments.json \
+  outputs-diarization/input.speakers.json \
+  --output-dir outputs-final \
+  --prefix input
+```
