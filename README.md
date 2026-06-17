@@ -91,7 +91,18 @@ ffmpeg -i "/path/to/source-video.mp4" \
 
 ## 6 小时访谈推荐命令
 
-先不要物理切分，让 FunASR 的 VAD 做内部长音频切分：
+正式跑长任务前，建议先抽 5 分钟样本验证模型、字幕格式和说话人标签：
+
+```bash
+uv run --no-sync funasr-subtitle input.mp3 \
+  --device cuda:0 \
+  --spk \
+  --sample-minutes 5 \
+  --output-dir outputs-sample-spk \
+  --prefix sample-spk
+```
+
+如果样本没问题，再跑完整音频。普通字幕可以不物理切分，让 FunASR 的 VAD 做内部长音频切分：
 
 ```bash
 uv run --no-sync funasr-subtitle input.mp4 \
@@ -108,11 +119,12 @@ uv run --no-sync funasr-subtitle input.mp4 \
 uv run --no-sync funasr-subtitle input.mp4 \
   --device cuda:0 \
   --spk \
+  --chunk-minutes 30 \
   --hotword person_a \
   --hotword person_b
 ```
 
-如果任务不稳定、显存不够，或者希望失败后更容易重跑，再开启物理分块：
+长任务建议开启物理分块，这样日志能看到全局进度，且每个 chunk 完成后会更新 `*.partial.srt`、`*.partial.vtt`、`*.partial.txt`、`*.partial.segments.json`：
 
 ```bash
 uv run --no-sync funasr-subtitle input.mp4 \
@@ -125,9 +137,24 @@ uv run --no-sync funasr-subtitle input.mp4 \
   --hotword person_b
 ```
 
+后台运行可以用一行 `nohup`：
+
+```bash
+nohup bash -lc 'cd /path/to/speech-to-text && uv run --no-sync funasr-subtitle /path/to/input.mp3 --device cuda:0 --spk --chunk-minutes 30 --output-dir outputs-spk' > /path/to/speech-to-text/funasr-spk.log 2>&1 &
+```
+
+查看日志和中间结果：
+
+```bash
+tail -f /path/to/speech-to-text/funasr-spk.log
+ls -lh /path/to/speech-to-text/outputs-spk/
+```
+
 ## 说明
 
 - 默认模型源是 Hugging Face：`--hub hf`，通常更适合海外服务器。
 - 如果 ModelScope 更快，可以加 `--hub ms`。
+- 使用 `--spk` 时，脚本会自动切到支持时间戳的 ModelScope Paraformer preset；说话人分离依赖句子时间戳。
 - 长视频默认不需要先切分；脚本会先用 FFmpeg 抽取 16 kHz 单声道 WAV。
+- 如果加了 `--chunk-minutes`，脚本会按块显示进度并持续写入 partial 输出。
 - `--no-sync` 会让 uv 使用安装脚本准备好的 `.venv`，避免运行时重新解析依赖或覆盖手动安装的 PyTorch wheel。

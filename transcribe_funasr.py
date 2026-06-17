@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,29 @@ def require_ffmpeg() -> None:
             raise SystemExit(f"`{name}` is required. Install it first, e.g. `sudo apt-get install ffmpeg`.")
 
 
-def to_wav(input_path: Path, wav_path: Path) -> None:
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+def format_seconds(seconds: int | float) -> str:
+    total = max(0, int(round(float(seconds))))
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{seconds:02d}s"
+    return f"{minutes}m{seconds:02d}s"
+
+
+def ffmpeg_input_args(input_path: Path, start_seconds: float, duration_seconds: float) -> list[str]:
+    args = ["-i", str(input_path)]
+    if start_seconds > 0:
+        args = ["-ss", str(start_seconds), *args]
+    if duration_seconds > 0:
+        args.extend(["-t", str(duration_seconds)])
+    return args
+
+
+def to_wav(input_path: Path, wav_path: Path, start_seconds: float = 0, duration_seconds: float = 0) -> None:
     run(
         [
             "ffmpeg",
@@ -46,8 +69,7 @@ def to_wav(input_path: Path, wav_path: Path) -> None:
             "-hide_banner",
             "-loglevel",
             "error",
-            "-i",
-            str(input_path),
+            *ffmpeg_input_args(input_path, start_seconds, duration_seconds),
             "-map",
             "0:a:0",
             "-vn",
@@ -62,7 +84,13 @@ def to_wav(input_path: Path, wav_path: Path) -> None:
     )
 
 
-def split_to_wavs(input_path: Path, out_dir: Path, chunk_seconds: int) -> list[Path]:
+def split_to_wavs(
+    input_path: Path,
+    out_dir: Path,
+    chunk_seconds: int,
+    start_seconds: float = 0,
+    duration_seconds: float = 0,
+) -> list[Path]:
     pattern = out_dir / "chunk_%06d.wav"
     run(
         [
@@ -71,8 +99,7 @@ def split_to_wavs(input_path: Path, out_dir: Path, chunk_seconds: int) -> list[P
             "-hide_banner",
             "-loglevel",
             "error",
-            "-i",
-            str(input_path),
+            *ffmpeg_input_args(input_path, start_seconds, duration_seconds),
             "-map",
             "0:a:0",
             "-vn",
@@ -246,6 +273,38 @@ def write_txt(entries: list[dict[str, Any]], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_outputs(
+    entries: list[dict[str, Any]],
+    raw_results: list[dict[str, Any]],
+    output_dir: Path,
+    prefix: str,
+    output_format: str,
+    suffix: str = "",
+) -> list[Path]:
+    normalized = normalize_entries(entries)
+    raw_json_path = output_dir / f"{prefix}{suffix}.raw.json"
+    entries_json_path = output_dir / f"{prefix}{suffix}.segments.json"
+    raw_json_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
+    entries_json_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    outputs: list[Path] = [raw_json_path, entries_json_path]
+    if output_format in ("srt", "all"):
+        path = output_dir / f"{prefix}{suffix}.srt"
+        write_srt(normalized, path)
+        outputs.append(path)
+    if output_format in ("vtt", "all"):
+        path = output_dir / f"{prefix}{suffix}.vtt"
+        write_vtt(normalized, path)
+        outputs.append(path)
+    if output_format in ("txt", "all"):
+        path = output_dir / f"{prefix}{suffix}.txt"
+        write_txt(normalized, path)
+        outputs.append(path)
+    if output_format == "json":
+        outputs = [raw_json_path, entries_json_path]
+    return outputs
+
+
 def model_names(hub: str, args: argparse.Namespace) -> dict[str, str]:
     if hub == "hf":
         defaults = {
@@ -256,7 +315,9 @@ def model_names(hub: str, args: argparse.Namespace) -> dict[str, str]:
         }
     else:
         defaults = {
-            "model": "paraformer-zh",
+            "model": "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+            if args.spk
+            else "paraformer-zh",
             "vad_model": "fsmn-vad",
             "punc_model": "ct-punc",
             "spk_model": "cam++",
@@ -284,6 +345,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hotword", action="append", default=[], help="Hotword. Can be repeated.")
     parser.add_argument("--chunk-minutes", type=int, default=0, help="Optional physical chunk size for long files.")
     parser.add_argument("--keep-audio", action="store_true", help="Keep extracted WAV files under output-dir/audio.")
+    parser.add_argument("--sample-minutes", type=float, default=0, help="Only transcribe a short sample.")
+    parser.add_argument("--sample-start-minutes", type=float, default=0, help="Sample start offset in minutes.")
+    parser.add_argument("--no-partial", action="store_true", help="Do not write partial outputs after each chunk.")
     parser.add_argument("--batch-size-s", type=int, default=300)
     parser.add_argument("--batch-threshold-s", type=int, default=60)
     parser.add_argument("--max-single-segment-ms", type=int, default=60_000)
@@ -307,10 +371,28 @@ def main() -> int:
     except ImportError as exc:
         raise SystemExit("Missing Python package `funasr`. Run `./install.sh` or `uv sync` first.") from exc
 
+    if args.spk and args.hub == "hf" and args.model is None:
+        log("Speaker diarization needs timestamp-capable ASR output; switching --hub to ms timestamp Paraformer preset.")
+        args.hub = "ms"
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    prefix = args.prefix or input_path.stem
-    raw_json_path = args.output_dir / f"{prefix}.raw.json"
-    entries_json_path = args.output_dir / f"{prefix}.segments.json"
+    sample_start_seconds = args.sample_start_minutes * 60
+    sample_seconds = args.sample_minutes * 60
+    if args.prefix:
+        prefix = args.prefix
+    elif args.sample_minutes > 0:
+        prefix = f"{input_path.stem}.sample-{args.sample_start_minutes:g}m-{args.sample_minutes:g}m"
+    else:
+        prefix = input_path.stem
+
+    source_duration_s = duration_ms(input_path) / 1000
+    log(f"Input: {input_path}")
+    log(f"Source duration: {format_seconds(source_duration_s)}")
+    if args.sample_minutes > 0:
+        log(
+            "Sample mode: "
+            f"start={format_seconds(sample_start_seconds)}, duration={format_seconds(sample_seconds)}"
+        )
 
     names = model_names(args.hub, args)
     model_kwargs: dict[str, Any] = {
@@ -324,7 +406,8 @@ def main() -> int:
     if args.spk:
         model_kwargs["spk_model"] = names["spk_model"]
 
-    print(f"Loading FunASR model on {args.device}...")
+    log(f"Model: {names['model']} (hub={args.hub}, device={args.device}, spk={args.spk})")
+    log(f"Loading FunASR model on {args.device}...")
     model = AutoModel(**model_kwargs)
 
     with tempfile.TemporaryDirectory(prefix="funasr_subs_") as tmp_name:
@@ -333,13 +416,23 @@ def main() -> int:
         audio_dir.mkdir(parents=True, exist_ok=True)
 
         if args.chunk_minutes > 0:
-            print(f"Extracting and splitting audio into {args.chunk_minutes} minute chunks...")
-            wavs = split_to_wavs(input_path, audio_dir, args.chunk_minutes * 60)
+            log(f"Extracting and splitting audio into {args.chunk_minutes} minute chunks...")
+            wavs = split_to_wavs(
+                input_path,
+                audio_dir,
+                args.chunk_minutes * 60,
+                start_seconds=sample_start_seconds,
+                duration_seconds=sample_seconds,
+            )
         else:
             wav = audio_dir / f"{prefix}.wav"
-            print("Extracting audio...")
-            to_wav(input_path, wav)
+            log("Extracting audio...")
+            to_wav(input_path, wav, start_seconds=sample_start_seconds, duration_seconds=sample_seconds)
             wavs = [wav]
+
+        wav_durations_ms = [duration_ms(wav) for wav in wavs]
+        total_audio_ms = sum(wav_durations_ms)
+        log(f"Prepared {len(wavs)} chunk(s), audio to transcribe: {format_seconds(total_audio_ms / 1000)}")
 
         generate_kwargs: dict[str, Any] = {
             "batch_size_s": args.batch_size_s,
@@ -351,37 +444,50 @@ def main() -> int:
         all_entries: list[dict[str, Any]] = []
         raw_results: list[dict[str, Any]] = []
         offset = 0
-        for idx, wav in enumerate(wavs, 1):
-            print(f"Transcribing chunk {idx}/{len(wavs)}: {wav.name}")
+        processed_ms = 0
+        total_started = time.monotonic()
+        for idx, (wav, wav_duration_ms) in enumerate(zip(wavs, wav_durations_ms), 1):
+            chunk_started = time.monotonic()
+            progress = processed_ms / total_audio_ms if total_audio_ms else 0
+            log(
+                f"[{idx}/{len(wavs)}] Start {wav.name}: "
+                f"offset={ms_to_srt(offset)}, duration={format_seconds(wav_duration_ms / 1000)}, "
+                f"progress={progress:.1%}"
+            )
             result = model.generate(input=str(wav), **generate_kwargs)
+            chunk_entries = sentence_entries(result, offset, include_speaker=args.spk)
             raw_results.append({"file": str(wav), "offset_ms": offset, "result": result})
-            all_entries.extend(sentence_entries(result, offset, include_speaker=args.spk))
-            if len(wavs) > 1:
-                offset += duration_ms(wav)
+            all_entries.extend(chunk_entries)
+            processed_ms += wav_duration_ms
+            offset += wav_duration_ms
 
-    entries = normalize_entries(all_entries)
-    raw_json_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
-    entries_json_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            chunk_elapsed_s = time.monotonic() - chunk_started
+            total_elapsed_s = time.monotonic() - total_started
+            avg_speed = (processed_ms / 1000) / total_elapsed_s if total_elapsed_s > 0 else 0
+            remaining_s = max(0, (total_audio_ms - processed_ms) / 1000)
+            eta_s = remaining_s / avg_speed if avg_speed > 0 else 0
+            log(
+                f"[{idx}/{len(wavs)}] Done {wav.name}: "
+                f"new_segments={len(chunk_entries)}, elapsed={format_seconds(chunk_elapsed_s)}, "
+                f"overall={processed_ms / total_audio_ms:.1%}, avg_speed={avg_speed:.1f}x, "
+                f"eta={format_seconds(eta_s)}"
+            )
+            if not args.no_partial:
+                partial_outputs = write_outputs(
+                    all_entries,
+                    raw_results,
+                    args.output_dir,
+                    prefix,
+                    args.format,
+                    suffix=".partial",
+                )
+                log(f"[{idx}/{len(wavs)}] Partial outputs updated: {partial_outputs[-1]}")
 
-    outputs: list[Path] = [raw_json_path, entries_json_path]
-    if args.format in ("srt", "all"):
-        path = args.output_dir / f"{prefix}.srt"
-        write_srt(entries, path)
-        outputs.append(path)
-    if args.format in ("vtt", "all"):
-        path = args.output_dir / f"{prefix}.vtt"
-        write_vtt(entries, path)
-        outputs.append(path)
-    if args.format in ("txt", "all"):
-        path = args.output_dir / f"{prefix}.txt"
-        write_txt(entries, path)
-        outputs.append(path)
-    if args.format == "json":
-        outputs = [raw_json_path, entries_json_path]
+    outputs = write_outputs(all_entries, raw_results, args.output_dir, prefix, args.format)
 
-    print("Done. Wrote:")
+    log("Done. Wrote:")
     for path in outputs:
-        print(f"  {path}")
+        log(f"  {path}")
     return 0
 
 
