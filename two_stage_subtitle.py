@@ -13,6 +13,9 @@ from stt_logging import command_to_string, format_seconds, log, log_step_done
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_HF_TIMESTAMP_MODEL = (
+    "alextomcat/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+)
 
 
 def script_path(name: str) -> str:
@@ -48,7 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-minutes", type=int, default=30, help="ASR physical chunk size.")
     parser.add_argument("--hotword", action="append", default=[], help="ASR hotword. Can be repeated.")
     parser.add_argument("--hub", choices=("hf", "ms"), default="hf", help="FunASR model hub.")
-    parser.add_argument("--model", help="FunASR ASR model id.")
+    parser.add_argument(
+        "--model",
+        help="FunASR ASR model id. Defaults to a timestamp-capable Paraformer model for two-stage mode.",
+    )
     parser.add_argument("--vad-model", help="FunASR VAD model id.")
     parser.add_argument("--punc-model", help="FunASR punctuation model id.")
     parser.add_argument("--batch-size-s", type=int, default=300)
@@ -128,6 +134,10 @@ def main() -> int:
     if args.skip_asr:
         log(f"Skipping ASR. Expecting existing segments: {segments_path}")
     else:
+        asr_model = args.model
+        if asr_model is None and args.hub == "hf":
+            asr_model = DEFAULT_HF_TIMESTAMP_MODEL
+
         asr_cmd = [
             sys.executable,
             script_path("transcribe_funasr.py"),
@@ -144,6 +154,7 @@ def main() -> int:
             prefix,
             "--format",
             "all",
+            "--require-timestamps",
             "--batch-size-s",
             str(args.batch_size_s),
             "--batch-threshold-s",
@@ -153,7 +164,7 @@ def main() -> int:
             "--funasr-log-level",
             args.funasr_log_level,
         ]
-        add_optional(asr_cmd, "--model", args.model)
+        add_optional(asr_cmd, "--model", asr_model)
         add_optional(asr_cmd, "--vad-model", args.vad_model)
         add_optional(asr_cmd, "--punc-model", args.punc_model)
         for hotword in args.hotword:

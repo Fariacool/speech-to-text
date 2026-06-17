@@ -365,6 +365,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-minutes", type=float, default=0, help="Only transcribe a short sample.")
     parser.add_argument("--sample-start-minutes", type=float, default=0, help="Sample start offset in minutes.")
     parser.add_argument("--no-partial", action="store_true", help="Do not write partial outputs after each chunk.")
+    parser.add_argument(
+        "--require-timestamps",
+        action="store_true",
+        help="Fail if the ASR model does not return sentence_info timestamps.",
+    )
     parser.add_argument("--preset-spk-num", type=int, help="Known number of speakers, e.g. 2 for interviews.")
     parser.add_argument("--spk-mode", choices=("default", "vad_segment", "punc_segment"), default="punc_segment")
     parser.add_argument("--show-funasr-progress", action="store_true", help="Show FunASR internal tqdm bars.")
@@ -381,6 +386,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--punc-model")
     parser.add_argument("--spk-model")
     return parser.parse_args()
+
+
+def result_has_text_without_sentence_info(result: Any) -> bool:
+    records = result if isinstance(result, list) else [result]
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        sentences = record.get("sentence_info")
+        if isinstance(sentences, list) and sentences:
+            continue
+        if str(record.get("text") or "").strip():
+            return True
+    return False
 
 
 def main() -> int:
@@ -515,6 +533,12 @@ def main() -> int:
             generate_started = time.monotonic()
             result = model.generate(input=str(wav), **generate_kwargs)
             log_step_done(f"[{idx}/{len(chunk_plan)}] FunASR generate", generate_started)
+            if args.require_timestamps and result_has_text_without_sentence_info(result):
+                raise SystemExit(
+                    "ASR output has text but no sentence_info timestamps. Use a timestamp-capable "
+                    "Paraformer model, or remove --require-timestamps if one subtitle entry per chunk "
+                    "is acceptable."
+                )
             chunk_entries = sentence_entries(result, offset, include_speaker=args.spk)
             raw_results.append({"file": str(wav), "offset_ms": offset, "result": result})
             all_entries.extend(chunk_entries)

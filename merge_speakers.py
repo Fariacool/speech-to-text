@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 from stt_logging import format_seconds, log, log_step_done
+
+SPEAKER_PREFIX_RE = re.compile(r"^\[SPEAKER[^\]]*\]\s*")
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,7 +53,7 @@ def load_segments(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     rows: list[dict[str, Any]] = []
     for item in data:
-        text = str(item.get("text") or "").strip()
+        text = SPEAKER_PREFIX_RE.sub("", str(item.get("text") or "").strip()).strip()
         if not text:
             continue
         rows.append(

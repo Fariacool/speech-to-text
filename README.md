@@ -242,6 +242,8 @@ tail -f logs/two-stage.log
 
 日志会记录模型加载、音频抽取、ASR 推理、diarization 推理、speaker 合并、文件写入等步骤的耗时。
 
+两阶段流程默认会给 FunASR 指定 timestamp-capable Paraformer 模型，并开启 `--require-timestamps`。如果 ASR 结果没有 `sentence_info` 句级时间戳，脚本会直接失败，避免生成每 30 分钟一条的巨长字幕。
+
 pyannote 默认会用 `--segmentation-batch-size 32` 和 `--embedding-batch-size 32`，比上游默认的 `1` 更适合 24GB 级别 GPU。显存不够时把它们降到 `16` 或 `8`；如果想优先速度、接受轻微可复现性差异，可以加 `--allow-tf32`。
 
 `community-1` 会返回 regular 和 exclusive 两种 diarization。脚本默认 `--diarization-output auto`，会优先使用更适合对齐字幕的 exclusive 输出；需要原始 speaker diarization 时可以改成 `--diarization-output regular`。
@@ -253,6 +255,8 @@ pyannote 默认会用 `--segmentation-batch-size 32` 和 `--embedding-batch-size
 ```bash
 uv run --no-sync funasr-subtitle input.mp3 \
   --device cuda:0 \
+  --model alextomcat/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch \
+  --require-timestamps \
   --chunk-minutes 30 \
   --output-dir outputs-asr \
   --hotword person_a \
