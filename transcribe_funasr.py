@@ -305,7 +305,7 @@ def main() -> int:
     try:
         from funasr import AutoModel
     except ImportError as exc:
-        raise SystemExit("Missing Python package `funasr`. Install dependencies from requirements.txt first.") from exc
+        raise SystemExit("Missing Python package `funasr`. Run `./install.sh` or `uv sync` first.") from exc
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = args.prefix or input_path.stem
