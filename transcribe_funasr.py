@@ -138,6 +138,28 @@ def duration_ms(path: Path) -> int:
     return int(float(out) * 1000)
 
 
+def build_chunk_plan(
+    source_duration_s: float,
+    start_seconds: float,
+    duration_seconds: float,
+    chunk_minutes: int,
+) -> list[tuple[float, float]]:
+    start = max(0.0, start_seconds)
+    available = max(0.0, source_duration_s - start)
+    total = min(duration_seconds, available) if duration_seconds > 0 else available
+    if total <= 0:
+        raise SystemExit("No audio remains after applying sample start/duration options.")
+
+    chunk_seconds = chunk_minutes * 60 if chunk_minutes > 0 else total
+    chunks: list[tuple[float, float]] = []
+    cursor = 0.0
+    while cursor < total - 0.001:
+        current = min(chunk_seconds, total - cursor)
+        chunks.append((start + cursor, current))
+        cursor += current
+    return chunks
+
+
 def ms_to_srt(ms: int | float | None) -> str:
     if ms is None or math.isnan(float(ms)):
         ms = 0
@@ -431,24 +453,18 @@ def main() -> int:
         audio_dir = args.output_dir / "audio" if args.keep_audio else tmp_dir
         audio_dir.mkdir(parents=True, exist_ok=True)
 
+        chunk_plan = build_chunk_plan(
+            source_duration_s,
+            sample_start_seconds,
+            sample_seconds,
+            args.chunk_minutes,
+        )
+        total_audio_ms = int(round(sum(duration for _, duration in chunk_plan) * 1000))
         if args.chunk_minutes > 0:
-            log(f"Extracting and splitting audio into {args.chunk_minutes} minute chunks...")
-            wavs = split_to_wavs(
-                input_path,
-                audio_dir,
-                args.chunk_minutes * 60,
-                start_seconds=sample_start_seconds,
-                duration_seconds=sample_seconds,
-            )
+            log(f"Prepared {len(chunk_plan)} chunk(s), chunk size: {args.chunk_minutes} minutes")
         else:
-            wav = audio_dir / f"{prefix}.wav"
-            log("Extracting audio...")
-            to_wav(input_path, wav, start_seconds=sample_start_seconds, duration_seconds=sample_seconds)
-            wavs = [wav]
-
-        wav_durations_ms = [duration_ms(wav) for wav in wavs]
-        total_audio_ms = sum(wav_durations_ms)
-        log(f"Prepared {len(wavs)} chunk(s), audio to transcribe: {format_seconds(total_audio_ms / 1000)}")
+            log("Prepared 1 chunk")
+        log(f"Audio to transcribe: {format_seconds(total_audio_ms / 1000)}")
 
         generate_kwargs: dict[str, Any] = {
             "batch_size_s": args.batch_size_s,
@@ -464,11 +480,24 @@ def main() -> int:
         offset = 0
         processed_ms = 0
         total_started = time.monotonic()
-        for idx, (wav, wav_duration_ms) in enumerate(zip(wavs, wav_durations_ms), 1):
+        for idx, (chunk_start_s, planned_duration_s) in enumerate(chunk_plan, 1):
             chunk_started = time.monotonic()
+            wav = audio_dir / f"chunk_{idx:06d}.wav"
             progress = processed_ms / total_audio_ms if total_audio_ms else 0
             log(
-                f"[{idx}/{len(wavs)}] Start {wav.name}: "
+                f"[{idx}/{len(chunk_plan)}] Extract {wav.name}: "
+                f"source_start={format_seconds(chunk_start_s)}, "
+                f"duration={format_seconds(planned_duration_s)}, progress={progress:.1%}"
+            )
+            to_wav(
+                input_path,
+                wav,
+                start_seconds=chunk_start_s,
+                duration_seconds=planned_duration_s,
+            )
+            wav_duration_ms = duration_ms(wav)
+            log(
+                f"[{idx}/{len(chunk_plan)}] Start {wav.name}: "
                 f"offset={ms_to_srt(offset)}, duration={format_seconds(wav_duration_ms / 1000)}, "
                 f"progress={progress:.1%}"
             )
@@ -485,7 +514,7 @@ def main() -> int:
             remaining_s = max(0, (total_audio_ms - processed_ms) / 1000)
             eta_s = remaining_s / avg_speed if avg_speed > 0 else 0
             log(
-                f"[{idx}/{len(wavs)}] Done {wav.name}: "
+                f"[{idx}/{len(chunk_plan)}] Done {wav.name}: "
                 f"new_segments={len(chunk_entries)}, elapsed={format_seconds(chunk_elapsed_s)}, "
                 f"overall={processed_ms / total_audio_ms:.1%}, avg_speed={avg_speed:.1f}x, "
                 f"eta={format_seconds(eta_s)}"
@@ -499,7 +528,9 @@ def main() -> int:
                     args.format,
                     suffix=".partial",
                 )
-                log(f"[{idx}/{len(wavs)}] Partial outputs updated: {partial_outputs[-1]}")
+                log(f"[{idx}/{len(chunk_plan)}] Partial outputs updated: {partial_outputs[-1]}")
+            if not args.keep_audio:
+                wav.unlink(missing_ok=True)
 
     outputs = write_outputs(all_entries, raw_results, args.output_dir, prefix, args.format)
 
