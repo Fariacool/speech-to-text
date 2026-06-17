@@ -206,6 +206,8 @@ export HF_TOKEN=your_huggingface_token
 uv run --no-sync two-stage-subtitle input.mp3 \
   --device cuda:0 \
   --diarization-device cuda \
+  --segmentation-batch-size 32 \
+  --embedding-batch-size 32 \
   --chunk-minutes 30 \
   --num-speakers 5 \
   --hotword person_a \
@@ -240,6 +242,8 @@ tail -f logs/two-stage.log
 
 日志会记录模型加载、音频抽取、ASR 推理、diarization 推理、speaker 合并、文件写入等步骤的耗时。
 
+pyannote 默认会用 `--segmentation-batch-size 32` 和 `--embedding-batch-size 32`，比上游默认的 `1` 更适合 24GB 级别 GPU。显存不够时把它们降到 `16` 或 `8`；如果想优先速度、接受轻微可复现性差异，可以加 `--allow-tf32`。
+
 如果需要手动分步跑，命令如下。
 
 第一步，分块跑 ASR，不加 `--spk`：
@@ -258,6 +262,8 @@ uv run --no-sync funasr-subtitle input.mp3 \
 ```bash
 uv run --no-sync pyannote-diarize input.mp3 \
   --device cuda \
+  --segmentation-batch-size 32 \
+  --embedding-batch-size 32 \
   --num-speakers 5 \
   --output-dir outputs-diarization
 ```

@@ -25,6 +25,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="pyannote/speaker-diarization-community-1")
     parser.add_argument("--token", help="Hugging Face token. Defaults to HF_TOKEN/HUGGINGFACE_HUB_TOKEN.")
     parser.add_argument("--device", default="cuda", help="cuda, cuda:0, or cpu.")
+    parser.add_argument("--segmentation-batch-size", type=int, default=32)
+    parser.add_argument("--embedding-batch-size", type=int, default=32)
+    parser.add_argument(
+        "--allow-tf32",
+        action="store_true",
+        help="Enable TF32 on NVIDIA GPUs for speed. This may slightly affect reproducibility.",
+    )
     parser.add_argument("--num-speakers", type=int, help="Exact known number of speakers.")
     parser.add_argument("--min-speakers", type=int, help="Minimum number of speakers.")
     parser.add_argument("--max-speakers", type=int, help="Maximum number of speakers.")
@@ -123,12 +130,24 @@ def main() -> int:
     if device_name.startswith("cuda") and not torch.cuda.is_available():
         log("CUDA requested but unavailable; falling back to CPU.")
         device_name = "cpu"
+    if args.allow_tf32 and device_name.startswith("cuda"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        log("TF32 enabled for CUDA matmul and cuDNN.")
 
     log(f"Loading diarization model: {args.model}")
     load_started = time.monotonic()
     pipeline = Pipeline.from_pretrained(args.model, token=token)
+    if hasattr(pipeline, "segmentation_batch_size"):
+        pipeline.segmentation_batch_size = args.segmentation_batch_size
+    if hasattr(pipeline, "embedding_batch_size"):
+        pipeline.embedding_batch_size = args.embedding_batch_size
     pipeline.to(torch.device(device_name))
     log_step_done("Diarization model load", load_started)
+    log(
+        "Diarization batch sizes: "
+        f"segmentation={args.segmentation_batch_size}, embedding={args.embedding_batch_size}"
+    )
     call_kwargs: dict[str, Any] = {}
     if args.num_speakers is not None:
         call_kwargs["num_speakers"] = args.num_speakers

@@ -61,6 +61,13 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--diarization-model", default="pyannote/speaker-diarization-community-1")
     parser.add_argument("--token", help="Hugging Face token. Defaults to HF_TOKEN/HUGGINGFACE_HUB_TOKEN.")
+    parser.add_argument("--segmentation-batch-size", type=int, default=32)
+    parser.add_argument("--embedding-batch-size", type=int, default=32)
+    parser.add_argument(
+        "--allow-tf32",
+        action="store_true",
+        help="Enable TF32 for pyannote CUDA inference. This may slightly affect reproducibility.",
+    )
     parser.add_argument("--num-speakers", type=int, help="Exact known number of speakers.")
     parser.add_argument("--min-speakers", type=int, help="Minimum number of speakers.")
     parser.add_argument("--max-speakers", type=int, help="Maximum number of speakers.")
@@ -167,6 +174,10 @@ def main() -> int:
             args.diarization_device,
             "--model",
             args.diarization_model,
+            "--segmentation-batch-size",
+            str(args.segmentation_batch_size),
+            "--embedding-batch-size",
+            str(args.embedding_batch_size),
             "--output-dir",
             str(diarization_dir),
             "--prefix",
@@ -176,6 +187,8 @@ def main() -> int:
         add_optional(diarize_cmd, "--num-speakers", args.num_speakers)
         add_optional(diarize_cmd, "--min-speakers", args.min_speakers)
         add_optional(diarize_cmd, "--max-speakers", args.max_speakers)
+        if args.allow_tf32:
+            diarize_cmd.append("--allow-tf32")
         run_command("Global speaker diarization with pyannote", diarize_cmd)
 
     if not speakers_path.exists():
