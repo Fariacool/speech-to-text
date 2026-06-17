@@ -97,6 +97,7 @@ ffmpeg -i "/path/to/source-video.mp4" \
 uv run --no-sync funasr-subtitle input.mp3 \
   --device cuda:0 \
   --spk \
+  --preset-spk-num 2 \
   --sample-minutes 5 \
   --output-dir outputs-sample-spk \
   --prefix sample-spk
@@ -119,6 +120,7 @@ uv run --no-sync funasr-subtitle input.mp4 \
 uv run --no-sync funasr-subtitle input.mp4 \
   --device cuda:0 \
   --spk \
+  --preset-spk-num 2 \
   --chunk-minutes 30 \
   --hotword person_a \
   --hotword person_b
@@ -140,7 +142,7 @@ uv run --no-sync funasr-subtitle input.mp4 \
 后台运行可以用一行 `nohup`：
 
 ```bash
-nohup bash -lc 'cd /path/to/speech-to-text && uv run --no-sync funasr-subtitle /path/to/input.mp3 --device cuda:0 --spk --chunk-minutes 30 --output-dir outputs-spk' > /path/to/speech-to-text/funasr-spk.log 2>&1 &
+nohup bash -lc 'cd /path/to/speech-to-text && uv run --no-sync funasr-subtitle /path/to/input.mp3 --device cuda:0 --spk --preset-spk-num 2 --chunk-minutes 30 --output-dir outputs-spk' > /path/to/speech-to-text/funasr-spk.log 2>&1 &
 ```
 
 查看日志和中间结果：
@@ -155,6 +157,7 @@ ls -lh /path/to/speech-to-text/outputs-spk/
 - 默认模型源是 Hugging Face：`--hub hf`，通常更适合海外服务器。
 - 如果 ModelScope 更快，可以加 `--hub ms`。
 - 使用 `--spk` 时，脚本会自动切到支持时间戳的 ModelScope Paraformer preset；说话人分离依赖句子时间戳。
+- 已知说话人数时加 `--preset-spk-num`，两人访谈建议 `--preset-spk-num 2`。
 - 长视频默认不需要先切分；脚本会先用 FFmpeg 抽取 16 kHz 单声道 WAV。
 - 如果加了 `--chunk-minutes`，脚本会按块显示进度并持续写入 partial 输出。
 - `--no-sync` 会让 uv 使用安装脚本准备好的 `.venv`，避免运行时重新解析依赖或覆盖手动安装的 PyTorch wheel。

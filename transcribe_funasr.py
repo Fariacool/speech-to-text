@@ -348,6 +348,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-minutes", type=float, default=0, help="Only transcribe a short sample.")
     parser.add_argument("--sample-start-minutes", type=float, default=0, help="Sample start offset in minutes.")
     parser.add_argument("--no-partial", action="store_true", help="Do not write partial outputs after each chunk.")
+    parser.add_argument("--preset-spk-num", type=int, help="Known number of speakers, e.g. 2 for interviews.")
+    parser.add_argument("--spk-mode", choices=("default", "vad_segment", "punc_segment"), default="punc_segment")
+    parser.add_argument("--show-funasr-progress", action="store_true", help="Show FunASR internal tqdm bars.")
     parser.add_argument("--batch-size-s", type=int, default=300)
     parser.add_argument("--batch-threshold-s", type=int, default=60)
     parser.add_argument("--max-single-segment-ms", type=int, default=60_000)
@@ -402,9 +405,14 @@ def main() -> int:
         "vad_kwargs": {"max_single_segment_time": args.max_single_segment_ms},
         "punc_model": names["punc_model"],
         "device": args.device,
+        "disable_update": True,
+        "disable_pbar": not args.show_funasr_progress,
     }
     if args.spk:
         model_kwargs["spk_model"] = names["spk_model"]
+        model_kwargs["spk_mode"] = args.spk_mode
+        if args.preset_spk_num is None:
+            log("Tip: known-speaker interviews usually improve with --preset-spk-num 2.")
 
     log(f"Model: {names['model']} (hub={args.hub}, device={args.device}, spk={args.spk})")
     log(f"Loading FunASR model on {args.device}...")
@@ -440,6 +448,8 @@ def main() -> int:
         }
         if args.hotword:
             generate_kwargs["hotword"] = " ".join(args.hotword)
+        if args.preset_spk_num is not None:
+            generate_kwargs["preset_spk_num"] = args.preset_spk_num
 
         all_entries: list[dict[str, Any]] = []
         raw_results: list[dict[str, Any]] = []
