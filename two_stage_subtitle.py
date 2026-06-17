@@ -64,6 +64,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segmentation-batch-size", type=int, default=32)
     parser.add_argument("--embedding-batch-size", type=int, default=32)
     parser.add_argument(
+        "--diarization-output",
+        choices=("auto", "exclusive", "regular"),
+        default="auto",
+        help="Which pyannote diarization output to merge. auto prefers exclusive when available.",
+    )
+    parser.add_argument(
         "--allow-tf32",
         action="store_true",
         help="Enable TF32 for pyannote CUDA inference. This may slightly affect reproducibility.",
@@ -178,6 +184,8 @@ def main() -> int:
             str(args.segmentation_batch_size),
             "--embedding-batch-size",
             str(args.embedding_batch_size),
+            "--diarization-output",
+            args.diarization_output,
             "--output-dir",
             str(diarization_dir),
             "--prefix",

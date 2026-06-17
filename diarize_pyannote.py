@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-speakers", type=int, help="Minimum number of speakers.")
     parser.add_argument("--max-speakers", type=int, help="Maximum number of speakers.")
     parser.add_argument(
+        "--diarization-output",
+        choices=("auto", "exclusive", "regular"),
+        default="auto",
+        help="Which pyannote output to write. auto prefers exclusive diarization when available.",
+    )
+    parser.add_argument(
         "--no-normalize-audio",
         action="store_true",
         help="Pass input directly to pyannote instead of first converting to 16 kHz mono WAV.",
@@ -93,6 +99,26 @@ def diarization_to_rows(diarization: Any) -> list[dict[str, Any]]:
         )
     rows.sort(key=lambda row: (row["start"], row["end"], row["speaker"]))
     return rows
+
+
+def select_diarization(output: Any, mode: str) -> tuple[Any, str]:
+    if mode == "exclusive":
+        if hasattr(output, "exclusive_speaker_diarization"):
+            return output.exclusive_speaker_diarization, "exclusive_speaker_diarization"
+        raise SystemExit("pyannote output does not include exclusive_speaker_diarization.")
+
+    if mode == "regular":
+        if hasattr(output, "speaker_diarization"):
+            return output.speaker_diarization, "speaker_diarization"
+        if hasattr(output, "write_rttm"):
+            return output, "annotation"
+        raise SystemExit("pyannote output does not include speaker_diarization.")
+
+    if hasattr(output, "exclusive_speaker_diarization"):
+        return output.exclusive_speaker_diarization, "exclusive_speaker_diarization"
+    if hasattr(output, "speaker_diarization"):
+        return output.speaker_diarization, "speaker_diarization"
+    return output, "annotation"
 
 
 def main() -> int:
@@ -169,8 +195,13 @@ def main() -> int:
         log(f"Running diarization on {device_name}: {diarization_input}")
         diarize_started = time.monotonic()
         with ProgressHook() as hook:
-            diarization = pipeline(str(diarization_input), hook=hook, **call_kwargs)
+            diarization_output = pipeline(str(diarization_input), hook=hook, **call_kwargs)
     log_step_done("Diarization inference", diarize_started)
+    diarization, diarization_kind = select_diarization(
+        diarization_output,
+        args.diarization_output,
+    )
+    log(f"Selected pyannote output: {diarization_kind}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = args.prefix or input_path.stem

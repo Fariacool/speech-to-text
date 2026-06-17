@@ -244,6 +244,8 @@ tail -f logs/two-stage.log
 
 pyannote 默认会用 `--segmentation-batch-size 32` 和 `--embedding-batch-size 32`，比上游默认的 `1` 更适合 24GB 级别 GPU。显存不够时把它们降到 `16` 或 `8`；如果想优先速度、接受轻微可复现性差异，可以加 `--allow-tf32`。
 
+`community-1` 会返回 regular 和 exclusive 两种 diarization。脚本默认 `--diarization-output auto`，会优先使用更适合对齐字幕的 exclusive 输出；需要原始 speaker diarization 时可以改成 `--diarization-output regular`。
+
 如果需要手动分步跑，命令如下。
 
 第一步，分块跑 ASR，不加 `--spk`：
