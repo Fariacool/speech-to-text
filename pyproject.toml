@@ -28,6 +28,7 @@ diarization = [
 funasr-subtitle = "transcribe_funasr:main"
 pyannote-diarize = "diarize_pyannote:main"
 merge-speakers = "merge_speakers:main"
+two-stage-subtitle = "two_stage_subtitle:main"
 
 [tool.setuptools]
-py-modules = ["transcribe_funasr", "diarize_pyannote", "merge_speakers"]
+py-modules = ["transcribe_funasr", "diarize_pyannote", "merge_speakers", "two_stage_subtitle", "stt_logging"]

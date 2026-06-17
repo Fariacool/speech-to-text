@@ -11,6 +11,12 @@
 ./install.sh
 ```
 
+如果要使用“两阶段说话人流程”（FunASR 分块 ASR + pyannote 全局 diarization + 合并），安装时加：
+
+```bash
+./install.sh --diarization
+```
+
 如果 GPU 镜像需要指定 PyTorch CUDA wheel 源：
 
 ```bash
@@ -22,6 +28,8 @@ CPU 测试环境：
 ```bash
 ./install.sh --cpu
 ```
+
+安装脚本会在每一步输出时间戳和耗时，方便排查是卡在系统依赖、PyTorch wheel、项目依赖还是 diarization 依赖。
 
 ## 基本使用
 
@@ -177,6 +185,62 @@ uv pip install --python .venv/bin/python -e '.[diarization]'
 ```bash
 export HF_TOKEN=your_huggingface_token
 ```
+
+推荐直接使用一键流程：
+
+```bash
+./run_two_stage.sh input.mp3 \
+  --device cuda:0 \
+  --diarization-device cuda \
+  --chunk-minutes 30 \
+  --num-speakers 5 \
+  --hotword person_a \
+  --hotword person_b \
+  --hotword organization_a \
+  --output-dir outputs-two-stage
+```
+
+等价的 `uv` 命令：
+
+```bash
+uv run --no-sync two-stage-subtitle input.mp3 \
+  --device cuda:0 \
+  --diarization-device cuda \
+  --chunk-minutes 30 \
+  --num-speakers 5 \
+  --hotword person_a \
+  --hotword person_b \
+  --hotword organization_a \
+  --output-dir outputs-two-stage
+```
+
+输出结构：
+
+- `outputs-two-stage/asr/`：FunASR 分块 ASR 的原始输出和普通字幕
+- `outputs-two-stage/diarization/`：pyannote 全局 speaker RTTM/JSON
+- `outputs-two-stage/final/`：合并 speaker 后的最终字幕
+
+后台运行：
+
+```bash
+nohup bash -lc 'cd /path/to/speech-to-text && ./run_two_stage.sh /path/to/input.mp3 --device cuda:0 --diarization-device cuda --num-speakers 5 --hotword person_a --output-dir outputs-two-stage' > logs/two-stage.log 2>&1 < /dev/null &
+```
+
+查看日志：
+
+```bash
+tail -f logs/two-stage.log
+```
+
+所有 Python 脚本和 Bash 包装脚本都会输出类似这样的日志格式：
+
+```text
+[2026-06-17 12:00:00 +0000 elapsed=1h02m03s] [3/12] FunASR generate completed in 4m12s
+```
+
+日志会记录模型加载、音频抽取、ASR 推理、diarization 推理、speaker 合并、文件写入等步骤的耗时。
+
+如果需要手动分步跑，命令如下。
 
 第一步，分块跑 ASR，不加 `--spk`：
 

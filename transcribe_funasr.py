@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from stt_logging import format_seconds, log, log_step_done
+
 
 def run(cmd: list[str]) -> None:
     try:
@@ -38,19 +40,6 @@ def require_ffmpeg() -> None:
     for name in ("ffmpeg", "ffprobe"):
         if shutil.which(name) is None:
             raise SystemExit(f"`{name}` is required. Install it first, e.g. `sudo apt-get install ffmpeg`.")
-
-
-def log(message: str) -> None:
-    print(message, flush=True)
-
-
-def format_seconds(seconds: int | float) -> str:
-    total = max(0, int(round(float(seconds))))
-    hours, rest = divmod(total, 3600)
-    minutes, seconds = divmod(rest, 60)
-    if hours:
-        return f"{hours}h{minutes:02d}m{seconds:02d}s"
-    return f"{minutes}m{seconds:02d}s"
 
 
 def ffmpeg_input_args(input_path: Path, start_seconds: float, duration_seconds: float) -> list[str]:
@@ -395,7 +384,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    script_started = time.monotonic()
     args = parse_args()
+    log("Starting funasr-subtitle.")
     require_ffmpeg()
     logging.getLogger().setLevel(getattr(logging, args.funasr_log_level))
 
@@ -429,7 +420,9 @@ def main() -> int:
     else:
         prefix = input_path.stem
 
+    duration_started = time.monotonic()
     source_duration_s = duration_ms(input_path) / 1000
+    log_step_done("Source duration probe", duration_started)
     log(f"Input: {input_path}")
     log(f"Source duration: {format_seconds(source_duration_s)}")
     if args.sample_minutes > 0:
@@ -458,7 +451,9 @@ def main() -> int:
 
     log(f"Model: {names['model']} (hub={args.hub}, device={args.device}, spk={args.spk})")
     log(f"Loading FunASR model on {args.device}...")
+    model_started = time.monotonic()
     model = AutoModel(**model_kwargs)
+    log_step_done("FunASR model load", model_started)
 
     with tempfile.TemporaryDirectory(prefix="funasr_subs_") as tmp_name:
         tmp_dir = Path(tmp_name)
@@ -501,19 +496,25 @@ def main() -> int:
                 f"source_start={format_seconds(chunk_start_s)}, "
                 f"duration={format_seconds(planned_duration_s)}, progress={progress:.1%}"
             )
+            extract_started = time.monotonic()
             to_wav(
                 input_path,
                 wav,
                 start_seconds=chunk_start_s,
                 duration_seconds=planned_duration_s,
             )
+            log_step_done(f"[{idx}/{len(chunk_plan)}] Audio extraction", extract_started)
+            wav_probe_started = time.monotonic()
             wav_duration_ms = duration_ms(wav)
+            log_step_done(f"[{idx}/{len(chunk_plan)}] Chunk duration probe", wav_probe_started)
             log(
                 f"[{idx}/{len(chunk_plan)}] Start {wav.name}: "
                 f"offset={ms_to_srt(offset)}, duration={format_seconds(wav_duration_ms / 1000)}, "
                 f"progress={progress:.1%}"
             )
+            generate_started = time.monotonic()
             result = model.generate(input=str(wav), **generate_kwargs)
+            log_step_done(f"[{idx}/{len(chunk_plan)}] FunASR generate", generate_started)
             chunk_entries = sentence_entries(result, offset, include_speaker=args.spk)
             raw_results.append({"file": str(wav), "offset_ms": offset, "result": result})
             all_entries.extend(chunk_entries)
@@ -532,6 +533,7 @@ def main() -> int:
                 f"eta={format_seconds(eta_s)}"
             )
             if not args.no_partial:
+                partial_started = time.monotonic()
                 partial_outputs = write_outputs(
                     all_entries,
                     raw_results,
@@ -541,14 +543,18 @@ def main() -> int:
                     suffix=".partial",
                 )
                 log(f"[{idx}/{len(chunk_plan)}] Partial outputs updated: {partial_outputs[-1]}")
+                log_step_done(f"[{idx}/{len(chunk_plan)}] Partial output write", partial_started)
             if not args.keep_audio:
                 wav.unlink(missing_ok=True)
 
+    final_write_started = time.monotonic()
     outputs = write_outputs(all_entries, raw_results, args.output_dir, prefix, args.format)
+    log_step_done("Final output write", final_write_started)
 
     log("Done. Wrote:")
     for path in outputs:
         log(f"  {path}")
+    log(f"Total funasr-subtitle elapsed: {format_seconds(time.monotonic() - script_started)}")
     return 0
 
 

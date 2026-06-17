@@ -7,8 +7,11 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+from stt_logging import format_seconds, log, log_step_done
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,10 +43,13 @@ def diarization_to_rows(diarization: Any) -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    script_started = time.monotonic()
     args = parse_args()
+    log("Starting pyannote-diarize.")
     input_path = args.input.expanduser().resolve()
     if not input_path.exists():
         raise SystemExit(f"Input file not found: {input_path}")
+    log(f"Input: {input_path}")
 
     if args.num_speakers is not None and (
         args.min_speakers is not None or args.max_speakers is not None
@@ -67,13 +73,15 @@ def main() -> int:
 
     device_name = args.device
     if device_name.startswith("cuda") and not torch.cuda.is_available():
-        print("CUDA requested but unavailable; falling back to CPU.", flush=True)
+        log("CUDA requested but unavailable; falling back to CPU.")
         device_name = "cpu"
 
-    print(f"Loading diarization model: {args.model}", flush=True)
+    log(f"Loading diarization model: {args.model}")
+    load_started = time.monotonic()
     pipeline = Pipeline.from_pretrained(args.model, token=token)
     pipeline.to(torch.device(device_name))
-    print(f"Running diarization on {device_name}: {input_path}", flush=True)
+    log_step_done("Diarization model load", load_started)
+    log(f"Running diarization on {device_name}: {input_path}")
 
     call_kwargs: dict[str, Any] = {}
     if args.num_speakers is not None:
@@ -84,23 +92,30 @@ def main() -> int:
         if args.max_speakers is not None:
             call_kwargs["max_speakers"] = args.max_speakers
 
+    diarize_started = time.monotonic()
     with ProgressHook() as hook:
         diarization = pipeline(str(input_path), hook=hook, **call_kwargs)
+    log_step_done("Diarization inference", diarize_started)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = args.prefix or input_path.stem
     rttm_path = args.output_dir / f"{prefix}.rttm"
     json_path = args.output_dir / f"{prefix}.speakers.json"
 
+    write_started = time.monotonic()
     with rttm_path.open("w", encoding="utf-8") as file:
         diarization.write_rttm(file)
 
     rows = diarization_to_rows(diarization)
     json_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_step_done("Diarization output write", write_started)
 
-    print("Done. Wrote:", flush=True)
-    print(f"  {rttm_path}", flush=True)
-    print(f"  {json_path}", flush=True)
+    log("Done. Wrote:")
+    log(f"  {rttm_path}")
+    log(f"  {json_path}")
+    log(
+        f"Total pyannote-diarize elapsed: {format_seconds(time.monotonic() - script_started)}"
+    )
     return 0
 
 

@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+from stt_logging import format_seconds, log, log_step_done
 
 
 def parse_args() -> argparse.Namespace:
@@ -161,21 +164,32 @@ def write_txt(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def main() -> int:
+    script_started = time.monotonic()
     args = parse_args()
+    log("Starting merge-speakers.")
     if not args.segments_json.exists():
         raise SystemExit(f"Segments file not found: {args.segments_json}")
     if not args.speakers.exists():
         raise SystemExit(f"Speakers file not found: {args.speakers}")
 
+    log(f"Segments input: {args.segments_json}")
+    log(f"Speakers input: {args.speakers}")
+    segments_started = time.monotonic()
     segments = load_segments(args.segments_json)
+    log_step_done(f"Loaded {len(segments)} ASR segments", segments_started)
+    speakers_started = time.monotonic()
     speakers = load_speakers(args.speakers)
+    log_step_done(f"Loaded {len(speakers)} speaker turns", speakers_started)
     if not speakers:
         raise SystemExit(f"No speaker turns found in: {args.speakers}")
 
+    assign_started = time.monotonic()
     rows = assign_speakers(segments, speakers, parse_speaker_map(args.speaker_map))
+    log_step_done(f"Assigned speakers to {len(rows)} segments", assign_started)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = args.prefix or args.segments_json.name.replace(".segments.json", "")
 
+    write_started = time.monotonic()
     json_path = args.output_dir / f"{prefix}.speaker_segments.json"
     json_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
     outputs = [json_path]
@@ -193,9 +207,11 @@ def main() -> int:
         write_txt(rows, path)
         outputs.append(path)
 
-    print("Done. Wrote:", flush=True)
+    log_step_done("Merged subtitle output write", write_started)
+    log("Done. Wrote:")
     for path in outputs:
-        print(f"  {path}", flush=True)
+        log(f"  {path}")
+    log(f"Total merge-speakers elapsed: {format_seconds(time.monotonic() - script_started)}")
     return 0
 
 
