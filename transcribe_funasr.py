@@ -367,6 +367,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--spk", action="store_true", help="Enable speaker diarization.")
     parser.add_argument("--hotword", action="append", default=[], help="Hotword. Can be repeated.")
     parser.add_argument("--chunk-minutes", type=int, default=0, help="Optional physical chunk size for long files.")
+    parser.add_argument(
+        "--allow-spk-chunking",
+        action="store_true",
+        help="Allow --spk with physical chunks. Speaker IDs may be inconsistent across chunks.",
+    )
     parser.add_argument("--keep-audio", action="store_true", help="Keep extracted WAV files under output-dir/audio.")
     parser.add_argument("--sample-minutes", type=float, default=0, help="Only transcribe a short sample.")
     parser.add_argument("--sample-start-minutes", type=float, default=0, help="Sample start offset in minutes.")
@@ -397,6 +402,13 @@ def main() -> int:
     input_path = args.input.expanduser().resolve()
     if not input_path.exists():
         raise SystemExit(f"Input file not found: {input_path}")
+
+    if args.spk and args.chunk_minutes > 0 and not args.allow_spk_chunking:
+        raise SystemExit(
+            "--spk cannot safely be combined with --chunk-minutes because each chunk runs a separate "
+            "speaker clustering pass, so speaker IDs may change between chunks. Remove --chunk-minutes "
+            "for global speaker diarization, or add --allow-spk-chunking only for rough/debug output."
+        )
 
     try:
         from funasr import AutoModel

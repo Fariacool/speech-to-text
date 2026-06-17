@@ -114,19 +114,18 @@ uv run --no-sync funasr-subtitle input.mp4 \
   --hotword organization_b
 ```
 
-需要说话人标签时加 `--spk`：
+需要说话人标签时加 `--spk`。不要同时加 `--chunk-minutes`，否则每个 chunk 会单独聚类，说话人编号会跨 chunk 错乱：
 
 ```bash
 uv run --no-sync funasr-subtitle input.mp4 \
   --device cuda:0 \
   --spk \
   --preset-spk-num 2 \
-  --chunk-minutes 30 \
   --hotword person_a \
   --hotword person_b
 ```
 
-长任务建议开启物理分块，这样日志能看到全局进度，且每个 chunk 完成后会更新 `*.partial.srt`、`*.partial.vtt`、`*.partial.txt`、`*.partial.segments.json`：
+普通字幕长任务可以开启物理分块，这样日志能看到全局进度，且每个 chunk 完成后会更新 `*.partial.srt`、`*.partial.vtt`、`*.partial.txt`、`*.partial.segments.json`：
 
 ```bash
 uv run --no-sync funasr-subtitle input.mp4 \
@@ -142,7 +141,7 @@ uv run --no-sync funasr-subtitle input.mp4 \
 后台运行可以用一行 `nohup`：
 
 ```bash
-nohup bash -lc 'cd /path/to/speech-to-text && uv run --no-sync funasr-subtitle /path/to/input.mp3 --device cuda:0 --spk --preset-spk-num 2 --chunk-minutes 30 --output-dir outputs-spk' > /path/to/speech-to-text/funasr-spk.log 2>&1 &
+nohup bash -lc 'cd /path/to/speech-to-text && uv run --no-sync funasr-subtitle /path/to/input.mp3 --device cuda:0 --spk --preset-spk-num 2 --output-dir outputs-spk' > /path/to/speech-to-text/funasr-spk.log 2>&1 &
 ```
 
 查看日志和中间结果：
@@ -159,5 +158,6 @@ ls -lh /path/to/speech-to-text/outputs-spk/
 - 使用 `--spk` 时，脚本会自动切到支持时间戳的 ModelScope Paraformer preset；说话人分离依赖句子时间戳。
 - 已知说话人数时加 `--preset-spk-num`，两人访谈建议 `--preset-spk-num 2`。
 - 长视频默认不需要先切分；脚本会先用 FFmpeg 抽取 16 kHz 单声道 WAV。
-- 如果加了 `--chunk-minutes`，脚本会按块显示进度并持续写入 partial 输出。
+- 如果加了 `--chunk-minutes`，脚本会按块显示进度并持续写入 partial 输出；这个模式只适合不加 `--spk` 的普通字幕。
+- 脚本默认禁止 `--spk + --chunk-minutes`。如果只是调试、接受 speaker 编号跨 chunk 不一致，可以显式加 `--allow-spk-chunking`。
 - `--no-sync` 会让 uv 使用安装脚本准备好的 `.venv`，避免运行时重新解析依赖或覆盖手动安装的 PyTorch wheel。
