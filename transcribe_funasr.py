@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import shutil
 import subprocess
@@ -351,6 +352,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset-spk-num", type=int, help="Known number of speakers, e.g. 2 for interviews.")
     parser.add_argument("--spk-mode", choices=("default", "vad_segment", "punc_segment"), default="punc_segment")
     parser.add_argument("--show-funasr-progress", action="store_true", help="Show FunASR internal tqdm bars.")
+    parser.add_argument(
+        "--funasr-log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        default="ERROR",
+    )
     parser.add_argument("--batch-size-s", type=int, default=300)
     parser.add_argument("--batch-threshold-s", type=int, default=60)
     parser.add_argument("--max-single-segment-ms", type=int, default=60_000)
@@ -364,6 +370,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     require_ffmpeg()
+    logging.getLogger().setLevel(getattr(logging, args.funasr_log_level))
 
     input_path = args.input.expanduser().resolve()
     if not input_path.exists():
@@ -407,6 +414,7 @@ def main() -> int:
         "device": args.device,
         "disable_update": True,
         "disable_pbar": not args.show_funasr_progress,
+        "log_level": args.funasr_log_level,
     }
     if args.spk:
         model_kwargs["spk_model"] = names["spk_model"]
